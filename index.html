@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Catalog Manager</title>
+ <style>
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    height: 100vh;
+    background-color: #f9f9f9;
+    color: #333;
+  }
+
+  .sidebar {
+    width: 15%;
+    background: linear-gradient(135deg, #FDC830, #F37335);
+    padding: 20px;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.05);
+    border-right: 1px solid #ddd;
+  }
+
+  .sidebar h3, .sidebar h4 {
+    margin-bottom: 10px;
+    color: #1e40af;
+  }
+
+  .sidebar select,
+  .sidebar input[type="text"],
+  .sidebar input[type="file"] {
+    width: 100%;
+    margin-bottom: 15px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+
+  .main {
+    flex: 1;
+    padding: 30px;
+    background-color: #ffffff;
+    overflow-y: auto;
+  }
+
+  h2 {
+    font-size: 24px;
+    color: #111827;
+    margin-bottom: 20px;
+  }
+
+  .controls {
+    margin-top: 30px;
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+  }
+
+  .controls button {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: white;
+    padding: 12px 20px;
+    font-size: 14px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    transition: background 0.3s ease, transform 0.2s ease;
+  }
+
+  .controls button:hover {
+    background: #1e3a8a;
+    transform: scale(1.05);
+  }
+
+  label {
+    display: block;
+    margin: 10px 0 5px;
+    font-weight: bold;
+  }
+
+  label.ProductType { color: #1d4ed8; }
+  label.ProductName { color: #f97316; }
+  label.ShortDesc { color: #059669; }
+  label.LongDesc { color: #dc2626; }
+  label.MainImage { color: #9333ea; }
+  label.SecondaryImage { color: #0d9488; }
+
+  .editable {
+    background-color: #f3f4f6;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 15px;
+    min-height: 100px;
+    white-space: pre-wrap;
+    overflow-y: auto;
+  }
+
+  img {
+    max-width: 70px;
+    height: auto;
+    margin: 5px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+  }
+
+  img:hover {
+    transform: scale(1.1);
+  }
+
+  .popup {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+  }
+
+  .popup img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border-radius: 12px;
+  }
+
+  .highlight {
+    background-color: #facc15;
+    padding: 2px 4px;
+    border-radius: 4px;
+  }
+
+  #currentCounts {
+    margin-top: 10px;
+    font-size: 14px;
+    background: #f1f5f9;
+    padding: 10px;
+    border-radius: 8px;
+    border-left: 4px solid #3b82f6;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+
+  #rowIndexDisplay {
+    color: #6b7280;
+    font-size: 14px;
+  }
+</style>
+
+</head>
+<body>
+  <div class="sidebar">
+    <h3>Filter by Product Type</h3>
+    <select id="filter" onchange="applyFilter()">
+      <option value="">All</option>
+    </select>
+    <input type="file" id="fileInput" accept=".xlsx" onchange="loadExcelFile()" />
+    <hr />
+    <h4>Search/Find</h4>
+    <input type="text" id="searchInput" oninput="highlightKeywords()" placeholder="Enter keywords..." />
+
+    <div class="controls">
+      <button onclick="prevRow()">Previous</button>
+      <button onclick="nextRow()">Next</button>
+      <button onclick="saveChanges()">Save Changes</button>
+      <button onclick="downloadExcel()">Download File</button>
+    </div>
+
+    <div id="ptCounts" class="info-box"></div>
+    <div id="currentCounts" class="info-box"></div>
+  </div>
+
+  <div class="main">
+    <h2>Product Details <span id="rowIndexDisplay"></span></h2>
+    <div id="detailsView"></div>
+  </div>
+
+  <div id="imagePopup" class="popup" style="display: none;" onclick="closePopup()">
+    <img id="popupImage" src="" alt="Expanded View" />
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script>
+    let workbook,
+        originalData,
+        filteredData = [],
+        currentIndex = 0;
+
+    const fieldMap = {
+      "Product Type": { label: "Product Type", className: "ProductType" },
+      "Product Name": { label: "Product Name", className: "ProductName" },
+      "Product Short Description": { label: "Product Short Description", className: "ShortDesc" },
+      "Product Long Description": { label: "Product Long Description", className: "LongDesc" },
+      "Main Image URL": { label: "Main Image", className: "MainImage" },
+      "Product Secondary Image URL": { label: "Secondary Images", className: "SecondaryImage" },
+    };
+
+   function loadExcelFile() {
+  const file = document.getElementById("fileInput").files[0];
+  uploadedFileName = file.name || "Updated_Products.xlsx"; // use actual name if available
+
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const data = new Uint8Array(e.target.result);
+    workbook = XLSX.read(data, { type: "array" });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    originalData = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    filteredData = [...originalData];
+    populateFilterOptions(originalData);
+    showRowDetails(0);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+
+    function populateFilterOptions(data) {
+      const filter = document.getElementById("filter");
+      filter.innerHTML = '<option value="">All</option>';
+      const productTypes = [...new Set(data.map((item) => item["Product Type"]))];
+      productTypes.forEach((type) => {
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = type;
+        filter.appendChild(option);
+      });
+    }
+
+    function showRowDetails(index) {
+      currentIndex = index;
+      const detailsView = document.getElementById("detailsView");
+      const rowData = filteredData[index];
+      if (!rowData) return;
+
+      const rowNumber = originalData.indexOf(rowData) + 2;
+      document.getElementById("rowIndexDisplay").textContent = `- Row ${rowNumber}`;
+      detailsView.innerHTML = "";
+
+      Object.keys(fieldMap).forEach((key) => {
+        const div = document.createElement("div");
+        const label = document.createElement("label");
+        label.textContent = fieldMap[key].label + ":";
+        label.className = fieldMap[key].className;
+        div.appendChild(label);
+
+        if (key === "Product Short Description" || key === "Product Long Description") {
+          const editableDiv = document.createElement("div");
+          editableDiv.className = "editable";
+          editableDiv.contentEditable = true;
+          editableDiv.innerHTML = rowData[key];
+          editableDiv.dataset.index = index;
+          editableDiv.dataset.key = key;
+          editableDiv.dataset.original = rowData[key];
+          editableDiv.oninput = function () {
+            filteredData[index][key] = editableDiv.innerHTML;
+          };
+          div.appendChild(editableDiv);
+        } else if (key === "Main Image URL") {
+          const img = document.createElement("img");
+          img.src = rowData[key];
+          img.alt = "Main Image";
+          img.onclick = () => expandImage(rowData[key]);
+          div.appendChild(img);
+        } else if (key === "Product Secondary Image URL") {
+          const urls = rowData[key] ? rowData[key].split(",").map(url => url.trim()).filter(Boolean) : [];
+          const countSpan = document.createElement("div");
+          countSpan.textContent = `(${urls.length} images)`;
+          div.appendChild(countSpan);
+          urls.forEach((url) => {
+            const img = document.createElement("img");
+            img.src = url;
+            img.alt = "Secondary Image";
+            img.onclick = () => expandImage(url);
+            div.appendChild(img);
+          });
+        } else {
+          const p = document.createElement("p");
+          p.textContent = rowData[key];
+          div.appendChild(p);
+        }
+
+        detailsView.appendChild(div);
+      });
+
+      highlightKeywords();
+      updateCounts();
+    }
+
+    function applyFilter() {
+      const value = document.getElementById("filter").value;
+      filteredData = value ? originalData.filter((row) => row["Product Type"] === value) : [...originalData];
+      showRowDetails(0);
+    }
+
+    function nextRow() {
+      if (currentIndex < filteredData.length - 1) showRowDetails(currentIndex + 1);
+    }
+
+    function prevRow() {
+      if (currentIndex > 0) showRowDetails(currentIndex - 1);
+    }
+
+    function saveChanges() {
+      alert("Changes saved successfully!");
+    }
+
+   function downloadExcel() {
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  const headers = Object.keys(originalData[0]);
+
+  for (let r = 0; r < originalData.length; r++) {
+    const rowNum = r + 2;
+    headers.forEach((header, c) => {
+      const cellAddr = XLSX.utils.encode_col(c) + rowNum;
+      sheet[cellAddr] = { t: "s", v: originalData[r][header] };
+    });
+  }
+
+  XLSX.writeFile(workbook, uploadedFileName);
+}
+
+
+    function expandImage(src) {
+      document.getElementById("popupImage").src = src;
+      document.getElementById("imagePopup").style.display = "flex";
+    }
+
+    function closePopup() {
+      document.getElementById("imagePopup").style.display = "none";
+      document.getElementById("popupImage").src = "";
+    }
+
+    function normalizeWord(word) {
+      if (word.length > 2) {
+        return word.replace(/('s|s)$/i, "").toLowerCase();
+      }
+      return word.toLowerCase();
+    }
+
+    function highlightKeywords() {
+      const input = document.getElementById("searchInput").value.trim();
+      if (!input) {
+        document.querySelectorAll(".editable").forEach((div) => {
+          if (div.dataset.original) {
+            div.innerHTML = div.dataset.original;
+          }
+        });
+        return;
+      }
+
+      const keywords = input
+        .split(",")
+        .map((k) => normalizeWord(k.trim()))
+        .filter((k) => k.length > 0);
+
+      document.querySelectorAll(".editable").forEach((div) => {
+        if (!div.dataset.original) {
+          div.dataset.original = div.innerHTML;
+        }
+        const originalText = div.dataset.original;
+
+        function highlightNode(node) {
+          if (node.nodeType === 3) {
+            const text = node.textContent;
+            const words = text.split(/(\W+)/);
+            let newContent = words
+              .map((w) => {
+                const norm = normalizeWord(w);
+                if (keywords.includes(norm)) {
+                  return `<span class="highlight">${w}</span>`;
+                }
+                return w;
+              })
+              .join("");
+            if (newContent !== text) {
+              const span = document.createElement("span");
+              span.innerHTML = newContent;
+              node.parentNode.replaceChild(span, node);
+            }
+          } else if (node.nodeType === 1 && node.childNodes) {
+            [...node.childNodes].forEach((child) => highlightNode(child));
+          }
+        }
+
+        div.innerHTML = originalText;
+        highlightNode(div);
+      });
+    }
+
+    function updateCounts() {
+      const ptCounts = document.getElementById("ptCounts");
+      const currentCounts = document.getElementById("currentCounts");
+
+      const totalPTs = new Set(originalData.map(row => row["Product Type"])).size;
+      const currentPT = document.getElementById("filter").value;
+      const totalRows = originalData.length;
+      const filteredRows = filteredData.length;
+
+      const currentRowIndex = filteredData[currentIndex]
+        ? originalData.indexOf(filteredData[currentIndex]) + 2
+        : "-";
+
+      ptCounts.innerHTML = `
+        <strong>Total Product Types:</strong> ${totalPTs}<br>
+        <strong>Total Rows:</strong> ${totalRows}<br>
+        <strong>Filtered Rows:</strong> ${filteredRows}<br>
+        <strong>Viewing Row:</strong> ${currentRowIndex}
+      `;
+
+     if (currentPT) {
+  currentCounts.innerHTML = `
+    <strong>Current Product Type:</strong> ${currentPT}<br>
+    <strong>Items in this Type:</strong> ${currentIndex + 1}/${filteredRows}
+  `;
+} else {
+  currentCounts.innerHTML = `
+    <strong>Showing All Product Types</strong><br>
+    <strong>Items:</strong> ${currentIndex + 1}/${filteredRows}
+  `;
+}
+
+    }
+  </script>
+</body>
+</html>
